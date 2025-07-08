@@ -70,27 +70,38 @@ sudo chown -R deploy:deploy /home/deploy/.ssh
 sudo chmod 700 /home/deploy/.ssh
 sudo chmod 600 /home/deploy/.ssh/authorized_keys
 
-# 從其他主機複製 deploy 使用者的 SSH 設定
-# 方法1: 使用 gcloud compute scp (適用於 GCP 主機)
-gcloud compute scp source-instance-name:/home/deploy/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys --zone=asia-east1-b
-sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys
+# 從 GCP Secret Manager 設定 deploy 使用者的 SSH 設定
+# 方法1: 從 GCP Secret Manager 複製 SSH 公鑰
+# 先將 secret 內容存到臨時檔案，然後提取值
+gcloud secrets versions access latest --secret=server-user-deploy --project=wonderland-nft > /tmp/deploy_secret.txt
 
-# 方法2: 使用傳統 scp (適用於一般主機)
-# sudo scp -i /path/to/your/private_key user@source-host:/home/deploy/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+# 提取 AUTHORIZED_KEY 值（處理多行格式）
+sed -n '/AUTHORIZED_KEY="/,/"$/p' /tmp/deploy_secret.txt | sed '1s/AUTHORIZED_KEY="//; $s/"$//; 1{/^$/d}' | sudo tee /home/deploy/.ssh/authorized_keys
 
-# 方法3: 手動複製內容 (先在來源主機執行 cat /home/deploy/.ssh/authorized_keys)
-# echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ...' | sudo tee -a /home/deploy/.ssh/authorized_keys
+# 提取 GITLAB_RSA 值（處理多行格式）
+sed -n '/GITLAB_RSA="/,/"$/p' /tmp/deploy_secret.txt | sed '1s/GITLAB_RSA="//; $s/"$//; 1{/^$/d}' | sudo tee /home/deploy/.ssh/id_rsa
 
-# 從其他主機複製 deploy 使用者的 git ssh 私鑰
-# 方法1: 使用 gcloud compute scp (適用於 GCP 主機)
-gcloud compute scp source-instance-name:/home/deploy/.ssh/id_rsa /home/deploy/.ssh/id_rsa --zone=asia-east1-b
-
-# 方法2: 使用傳統 scp (適用於一般主機)
-# sudo scp -i /path/to/your/private_key user@source-host:/home/deploy/.ssh/id_rsa /home/deploy/.ssh/id_rsa
+# 清理臨時檔案
+rm -f /tmp/deploy_secret.txt
 
 # 設定正確的權限
+sudo chmod 600 /home/deploy/.ssh/authorized_keys
 sudo chmod 600 /home/deploy/.ssh/id_rsa
+sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys
 sudo chown deploy:deploy /home/deploy/.ssh/id_rsa
+
+# 方法2: 去其他主機 手動複製內容 (如果 Secret Manager 不可用)
+# 複製 SSH 公鑰:
+# echo 'authorized_keys' | sudo tee /home/deploy/.ssh/authorized_keys
+
+# 複製 GitLab SSH 私鑰:
+# echo 'gitlab-ssh-key' | sudo tee /home/deploy/.ssh/id_rsa
+
+# 然後設定權限:
+# sudo chmod 600 /home/deploy/.ssh/authorized_keys
+# sudo chmod 600 /home/deploy/.ssh/id_rsa
+# sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys
+# sudo chown deploy:deploy /home/deploy/.ssh/id_rsa
 ```
 
 ## 2. 基礎設施部署 (Docker)
