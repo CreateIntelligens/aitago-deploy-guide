@@ -115,6 +115,7 @@ services:
         dockerfile: Dockerfile
     image: aitago-api:latest
     container_name: aitago-api
+    restart: unless-stopped
     ports:
         - "9002:9000"
     volumes:
@@ -215,6 +216,7 @@ services:
           - VITE_API_URL=$VITE_API_URL
     image: linebot:latest
     container_name: linebot
+    restart: unless-stopped
     ports:
         - "9001:80"
     restart: always
@@ -225,6 +227,7 @@ services:
     image: linebot:latest
     container_name: reverb-server
     command: php artisan reverb:start
+    restart: unless-stopped
     ports:
       - "8080:8080"
     restart: always
