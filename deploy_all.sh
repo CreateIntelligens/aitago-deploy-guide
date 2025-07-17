@@ -55,6 +55,7 @@ echo "- 整個部署過程可能需要 15-30 分鐘"
 echo "- 部署過程中會詢問一些設定資訊"
 echo "- 請確保有穩定的網路連接"
 echo "- 請確保域名 DNS 已指向此伺服器"
+echo "- 請確主機的IP 已設置gitlab server 白名單"
 echo ""
 
 if ! ask_continue "是否開始完整部署"; then

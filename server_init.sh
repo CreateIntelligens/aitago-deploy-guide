@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Aitago 伺服器初始化腳本
+# Aitago 伺服器初始化腳本 (跨平台版本)
 # 本腳本將執行伺服器初始化的步驟 1-3
+# 支援 Ubuntu, Debian 等系統
 # 使用方式: sudo bash server_init.sh
 
 set -e  # 遇到錯誤時立即退出
@@ -15,6 +16,82 @@ if [ "$EUID" -ne 0 ]; then
     echo "請使用 sudo 執行此腳本: sudo bash server_init.sh"
     exit 1
 fi
+
+# 偵測作業系統
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$NAME
+        VERSION=$VERSION_ID
+        CODENAME=$VERSION_CODENAME
+    elif [ -f /etc/debian_version ]; then
+        OS="Debian"
+        VERSION=$(cat /etc/debian_version)
+    elif [ -f /etc/redhat-release ]; then
+        OS="CentOS"
+    else
+        echo "無法偵測作業系統"
+        exit 1
+    fi
+    
+    echo "偵測到作業系統: $OS $VERSION"
+    
+    # 設定套件管理器
+    if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
+        PKG_MANAGER="apt"
+        PKG_UPDATE="apt-get update"
+        PKG_INSTALL="apt-get install -y"
+    elif [[ "$OS" == *"CentOS"* ]] || [[ "$OS" == *"Red Hat"* ]]; then
+        PKG_MANAGER="yum"
+        PKG_UPDATE="yum update -y"
+        PKG_INSTALL="yum install -y"
+    else
+        echo "不支援的作業系統: $OS"
+        exit 1
+    fi
+}
+
+# 取得 MySQL 客戶端套件名稱
+get_mysql_client_package() {
+    if [[ "$OS" == *"Ubuntu"* ]]; then
+        # Ubuntu 系統
+        if [[ "$VERSION" == "20.04" ]] || [[ "$VERSION" == "22.04" ]] || [[ "$VERSION" == "24.04" ]]; then
+            echo "mysql-client-core-8.0"
+        else
+            echo "default-mysql-client"
+        fi
+    elif [[ "$OS" == *"Debian"* ]]; then
+        # Debian 系統
+        if [[ "$VERSION" == "11" ]] || [[ "$VERSION" == "12" ]]; then
+            echo "default-mysql-client"
+        elif [[ "$VERSION" == "10" ]]; then
+            echo "default-mysql-client"
+        else
+            echo "mariadb-client"
+        fi
+    else
+        echo "mysql"
+    fi
+}
+
+# 取得 Docker 儲存庫 URL 和金鑰
+get_docker_repo_info() {
+    if [[ "$OS" == *"Ubuntu"* ]]; then
+        DOCKER_GPG_URL="https://download.docker.com/linux/ubuntu/gpg"
+        DOCKER_REPO="https://download.docker.com/linux/ubuntu"
+        DOCKER_CODENAME="$VERSION_CODENAME"
+    elif [[ "$OS" == *"Debian"* ]]; then
+        DOCKER_GPG_URL="https://download.docker.com/linux/debian/gpg"
+        DOCKER_REPO="https://download.docker.com/linux/debian"
+        DOCKER_CODENAME="$VERSION_CODENAME"
+    else
+        echo "不支援的 Docker 安裝平台: $OS"
+        exit 1
+    fi
+}
+
+# 偵測系統
+detect_os
 
 echo "1. 系統設定..."
 echo "----------------------------------------"
@@ -33,19 +110,44 @@ echo "2. 安裝必要套件..."
 echo "----------------------------------------"
 # 1.2 安裝必要套件
 echo "更新套件列表..."
-if apt-get update; then
+if $PKG_UPDATE; then
     echo "✓ 套件列表更新完成"
 else
     echo "✗ 套件列表更新失敗"
     exit 1
 fi
 
-echo "安裝必要套件: git, redis-tools, certbot, python3-certbot-nginx, mysql-client..."
-if apt-get install -y git redis-tools certbot python3-certbot-nginx mysql-client; then
-    echo "✓ 必要套件安裝完成"
+# 取得 MySQL 客戶端套件名稱
+MYSQL_CLIENT_PACKAGE=$(get_mysql_client_package)
+echo "使用 MySQL 客戶端套件: $MYSQL_CLIENT_PACKAGE"
+
+echo "安裝必要套件: git, redis-tools, certbot, python3-certbot-nginx, $MYSQL_CLIENT_PACKAGE..."
+
+# 建立套件列表
+PACKAGES="git redis-tools certbot python3-certbot-nginx $MYSQL_CLIENT_PACKAGE"
+
+# 嘗試安裝套件，如果 MySQL 客戶端失敗，嘗試替代方案
+if ! $PKG_INSTALL $PACKAGES; then
+    echo "嘗試使用替代的 MySQL 客戶端套件..."
+    
+    # 嘗試替代套件
+    if [[ "$OS" == *"Debian"* ]]; then
+        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx mariadb-client"
+    else
+        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx default-mysql-client"
+    fi
+    
+    echo "嘗試安裝: $ALT_PACKAGES"
+    if $PKG_INSTALL $ALT_PACKAGES; then
+        echo "✓ 必要套件安裝完成（使用替代套件）"
+    else
+        echo "✗ 必要套件安裝失敗"
+        echo "請檢查可用的 MySQL 客戶端套件："
+        echo "apt search mysql-client"
+        exit 1
+    fi
 else
-    echo "✗ 必要套件安裝失敗"
-    exit 1
+    echo "✓ 必要套件安裝完成"
 fi
 
 echo ""
@@ -53,30 +155,42 @@ echo "3. 安裝 Docker..."
 echo "----------------------------------------"
 # 1.3 安裝 Docker
 echo "安裝 Docker 相依套件..."
-apt-get install -y ca-certificates curl
+$PKG_INSTALL ca-certificates curl
 
 echo "建立 Docker GPG 金鑰目錄..."
 install -m 0755 -d /etc/apt/keyrings
 
+# 取得 Docker 儲存庫資訊
+get_docker_repo_info
+
 echo "下載 Docker GPG 金鑰..."
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+curl -fsSL $DOCKER_GPG_URL -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
 echo "新增 Docker 儲存庫..."
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] $DOCKER_REPO $DOCKER_CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 echo "更新套件列表..."
-apt-get update
+$PKG_UPDATE
 
 echo "安裝 Docker 相關套件..."
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+$PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+echo "啟動 Docker 服務..."
+systemctl start docker
+systemctl enable docker
 
 echo "驗證 Docker 安裝..."
 if docker run hello-world; then
     echo "✓ Docker 安裝驗證成功"
-    echo "清理驗證用的 hello-world 映像..."
-    docker rmi hello-world
-    echo "✓ hello-world 映像已清理"
+    echo "清理驗證用的 hello-world 容器和映像..."
+    # 刪除所有 hello-world 容器（包括剛創建的）
+    docker rm $(docker ps -a -q --filter ancestor=hello-world) 2>/dev/null || true
+    
+    # 刪除 hello-world 映像
+    docker rmi hello-world 2>/dev/null || true
+    
+    echo "✓ hello-world 容器和映像已清理"
 else
     echo "✗ Docker 安裝驗證失敗"
     exit 1
@@ -103,12 +217,23 @@ fi
 echo "鎖定 deploy 使用者密碼..."
 passwd -l deploy
 
-echo "將 deploy 使用者加入 google-sudoers 群組..."
+# 將 deploy 使用者加入 docker 群組
+echo "將 deploy 使用者加入 docker 群組..."
+usermod -aG docker deploy
+
+echo "將 deploy 使用者加入 sudo 相關群組..."
+# 檢查並加入適當的 sudo 群組
 if getent group google-sudoers > /dev/null 2>&1; then
     usermod -aG google-sudoers deploy
     echo "✓ deploy 使用者已加入 google-sudoers 群組"
+elif getent group sudo > /dev/null 2>&1; then
+    usermod -aG sudo deploy
+    echo "✓ deploy 使用者已加入 sudo 群組"
+elif getent group wheel > /dev/null 2>&1; then
+    usermod -aG wheel deploy
+    echo "✓ deploy 使用者已加入 wheel 群組"
 else
-    echo "⚠ 警告: google-sudoers 群組不存在，跳過此步驟"
+    echo "⚠ 警告: 找不到適當的 sudo 群組"
 fi
 
 echo "檢查 deploy 使用者群組..."
@@ -187,8 +312,14 @@ echo "=========================================="
 echo "伺服器初始化完成！"
 echo "=========================================="
 echo ""
+echo "系統資訊:"
+echo "作業系統: $OS $VERSION"
+echo "套件管理器: $PKG_MANAGER"
+echo "MySQL 客戶端: $MYSQL_CLIENT_PACKAGE"
+echo ""
 echo "後續步驟："
 echo "1. 如果 SSH 金鑰設定失敗，請手動設定 SSH 金鑰"
 echo "2. 執行基礎設施部署 (Docker)"
+echo "3. 重新登入或執行 'newgrp docker' 以使 docker 群組生效"
 echo ""
 echo "請參考部署指南文件的第 2 節進行基礎設施部署"

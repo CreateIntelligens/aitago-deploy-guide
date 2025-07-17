@@ -64,6 +64,7 @@ echo "建立 /srv/docker-compose 相關資料夾..."
 mkdir -p /srv/docker-compose/mysql
 mkdir -p /srv/docker-compose/mysql-init
 mkdir -p /srv/docker-compose/redis
+mkdir -p /srv/docker-compose/redis-conf
 
 echo "資料夾結構建立完成"
 
@@ -88,19 +89,16 @@ echo "請設定資料庫和 Redis 密碼："
 echo "注意: 密碼將用於 MySQL root 使用者和 Redis 認證"
 
 # 詢問使用者輸入密碼
-ask_password "請輸入 MySQL root 密碼 (至少8個字符)" DB_ROOT_PASSWORD
+ask_password "請輸入 MySQL root 密碼 (至少8個字符-避開特殊字元($))" DB_ROOT_PASSWORD
 ask_password "請輸入 Aitago 資料庫密碼" DB_AITAGO_PASSWORD "Ai3ta2go1%@"
 ask_password "請輸入 Line CRM 資料庫密碼" DB_LINEBOT_PASSWORD "linebot"
 ask_password "請輸入 Redis 密碼 (至少8個字符)" REDIS_PASSWORD
 
-# 建立 .env 檔案
+# 為 MySQL 建立 .env 檔案（只包含 MySQL 需要的變數）
 echo "建立環境變數檔案..."
-cat > /srv/docker-compose/.env << EOF
+cat > /srv/docker-compose/.env << ENVEOF
 DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
-DB_AITAGO_PASSWORD=$DB_AITAGO_PASSWORD
-DB_LINEBOT_PASSWORD=$DB_LINEBOT_PASSWORD
-REDIS_PASSWORD=$REDIS_PASSWORD
-EOF
+ENVEOF
 
 echo "環境變數檔案建立完成"
 
@@ -109,7 +107,7 @@ echo "4. 建立 MySQL 初始化腳本..."
 echo "----------------------------------------"
 # 2.4 建立 MySQL 初始化腳本
 echo "建立 MySQL 初始化腳本..."
-cat > /srv/docker-compose/mysql-init/init.sql << EOF
+cat > /srv/docker-compose/mysql-init/init.sql << SQLEOF
 -- 初始化 Aitago 資料庫
 CREATE DATABASE IF NOT EXISTS aitago DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS 'aitago'@'%' IDENTIFIED BY '$DB_AITAGO_PASSWORD';
@@ -121,18 +119,46 @@ CREATE DATABASE IF NOT EXISTS linebot DEFAULT CHARACTER SET utf8mb4 COLLATE utf8
 CREATE USER IF NOT EXISTS 'linebot'@'%' IDENTIFIED BY '$DB_LINEBOT_PASSWORD';
 GRANT ALL PRIVILEGES ON linebot.* TO 'linebot'@'%';
 FLUSH PRIVILEGES;
-EOF
+SQLEOF
 
 echo "MySQL 初始化腳本建立完成"
 
 echo ""
-echo "5. 建立 Docker Compose 設定檔..."
+echo "5. 建立 Redis 設定檔..."
+echo "----------------------------------------"
+# 建立 Redis 設定檔，避免在 Docker Compose 中使用環境變數
+echo "建立 Redis 設定檔..."
+cat > /srv/docker-compose/redis-conf/redis.conf << REDISEOF
+# Redis 設定檔
+port 6379
+bind 0.0.0.0
+requirepass $REDIS_PASSWORD
+
+# 基本設定
+timeout 0
+keepalive 300
+databases 16
+
+# 持久化設定
+save 900 1
+save 300 10
+save 60 10000
+
+# 日誌設定
+loglevel notice
+
+# 最大記憶體設定
+maxmemory-policy allkeys-lru
+REDISEOF
+
+echo "Redis 設定檔建立完成"
+
+echo ""
+echo "6. 建立 Docker Compose 設定檔..."
 echo "----------------------------------------"
 # 2.5 建立 docker-compose.yaml
 echo "建立 docker-compose.yaml..."
-cat > /srv/docker-compose/docker-compose.yaml << 'EOF'
-version: '3.3'
-
+cat > /srv/docker-compose/docker-compose.yaml << 'YAMLEOF'
 services:
   mysql:
     env_file:
@@ -159,8 +185,6 @@ services:
       retries: 10
 
   redis:
-    env_file:
-      - .env
     image: redis:alpine
     container_name: redis
     restart: unless-stopped
@@ -168,7 +192,8 @@ services:
       - "6379:6379"
     volumes:
       - ./redis:/data:rw
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+      - ./redis-conf/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - nginx-php
     healthcheck:
@@ -179,12 +204,12 @@ services:
 networks:
     nginx-php:
         external: true
-EOF
+YAMLEOF
 
 echo "Docker Compose 設定檔建立完成"
 
 echo ""
-echo "6. 啟動基礎服務..."
+echo "7. 啟動基礎服務..."
 echo "----------------------------------------"
 # 2.6 啟動基礎服務
 echo "切換到 docker-compose 目錄..."
@@ -203,7 +228,7 @@ echo "檢查服務狀態..."
 docker compose ps
 
 echo ""
-echo "7. 驗證服務..."
+echo "8. 驗證服務..."
 echo "----------------------------------------"
 echo "等待 MySQL 服務完全啟動..."
 timeout=60
@@ -221,6 +246,7 @@ done
 echo "MySQL 服務已啟動"
 
 echo "測試 Redis 連接..."
+# 直接使用變數而不是從文件讀取
 if docker exec redis redis-cli -a "$REDIS_PASSWORD" ping > /dev/null 2>&1; then
     echo "Redis 服務已啟動"
 else
@@ -228,11 +254,12 @@ else
 fi
 
 echo ""
-echo "8. 設定目錄權限..."
+echo "9. 設定目錄權限..."
 echo "----------------------------------------"
 # 設定適當的權限
 chown -R 999:999 /srv/docker-compose/mysql
 chown -R 999:999 /srv/docker-compose/redis
+chown -R 999:999 /srv/docker-compose/redis-conf
 
 echo "目錄權限設定完成"
 
@@ -246,8 +273,12 @@ echo "- MySQL 8.0 (Port: 3306)"
 echo "- Redis (Port: 6379)"
 echo ""
 echo "建立的資料庫："
-echo "- aitago (使用者: aitago, 密碼: $DB_AITAGO_PASSWORD)"
-echo "- linebot (使用者: linebot, 密碼: $DB_LINEBOT_PASSWORD)"
+echo "- aitago (使用者: aitago)"
+echo "- linebot (使用者: linebot)"
+echo ""
+echo "設定檔位置："
+echo "- MySQL 環境變數: /srv/docker-compose/.env"
+echo "- Redis 設定檔: /srv/docker-compose/redis-conf/redis.conf"
 echo ""
 echo "服務狀態："
 docker compose ps
