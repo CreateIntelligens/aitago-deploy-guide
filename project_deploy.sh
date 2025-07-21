@@ -66,6 +66,41 @@ ask_continue() {
     done
 }
 
+# 函數：選項選擇器
+ask_choice() {
+    local prompt="$1"
+    local var_name="$2"
+    local default_index="$3"
+    shift 3
+    local options=("$@")
+    local choice
+    
+    while true; do
+        echo "$prompt"
+        for i in "${!options[@]}"; do
+            local index=$((i + 1))
+            if [ "$index" -eq "$default_index" ]; then
+                echo "$index) ${options[$i]} (預設)"
+            else
+                echo "$index) ${options[$i]}"
+            fi
+        done
+        
+        read -p "請輸入選項 (1-${#options[@]}) [預設: $default_index]: " choice
+        choice="${choice:-$default_index}"
+        
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
+            local selected_option="${options[$((choice - 1))]}"
+            local value=$(echo "$selected_option" | cut -d'(' -f1 | xargs)
+            eval "$var_name='$value'"
+            echo "已選擇：$selected_option"
+            break
+        else
+            echo "無效的選項，請輸入 1-${#options[@]} 之間的數字"
+        fi
+    done
+}
+
 echo "專案部署前準備..."
 echo "----------------------------------------"
 echo "本腳本將部署以下三個專案："
@@ -78,12 +113,13 @@ echo ""
 echo "請提供 Git 儲存庫資訊："
 ask_input "aitago-api Git 儲存庫 URL" AITAGO_API_REPO "git@gitlab.aicreate360.com:aitago/aitago-api.git"
 ask_input "line-crm Git 儲存庫 URL" LINE_CRM_REPO "git@gitlab.aicreate360.com:aitago/line-crm.git"
-ask_input "VITE_API_URL (用於 line-crm 建置)" VITE_API_URL "https://api.example.com"
+ask_input "VITE_API_URL (用於 line-crm 建置，要填寫line-crm的 API URL)" VITE_API_URL "https://api.example.com"
 
 echo ""
 echo "請提供專案基本設定："
 ask_input "專案域名 (例: example.com)" PROJECT_DOMAIN
 ask_input "專案名稱 (例: aitago)" PROJECT_NAME_INPUT
+ask_choice "請選擇應用程式環境：" APP_ENV 1 "local (開發環境)" "production (生產環境)"
 ask_input "Redis 密碼" REDIS_PASSWORD_INPUT
 ask_input "Aitago 資料庫密碼" DB_AITAGO_PASSWORD "Ai3ta2go1%@"
 ask_input "Line CRM 資料庫密碼" DB_LINEBOT_PASSWORD "linebot"
@@ -174,6 +210,13 @@ if [ -f ".env.example" ]; then
         sed -i "s/JWT_ALGO=.*/JWT_ALGO=HS256/" .env
     else
         echo "JWT_ALGO=HS256" >> .env
+    fi
+    
+    # 添加或更新 APP_ENV 設定
+    if grep -q "^APP_ENV=" .env; then
+        sed -i "s/APP_ENV=.*/APP_ENV=$APP_ENV/" .env
+    else
+        echo "APP_ENV=$APP_ENV" >> .env
     fi
     
     sed -i "s|APP_URL=.*|APP_URL=https://api.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
@@ -280,6 +323,13 @@ if [ -f ".env.example" ]; then
         sed -i "s/JWT_ALGO=.*/JWT_ALGO=HS256/" .env
     else
         echo "JWT_ALGO=HS256" >> .env
+    fi
+    
+    # 添加或更新 APP_ENV 設定
+    if grep -q "^APP_ENV=" .env; then
+        sed -i "s/APP_ENV=.*/APP_ENV=$APP_ENV/" .env
+    else
+        echo "APP_ENV=$APP_ENV" >> .env
     fi
     
     # 詢問 Line 相關設定

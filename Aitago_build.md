@@ -603,15 +603,17 @@ Certbot 會自動修改您的 Nginx 設定檔以啟用 HTTPS。
 sudo systemctl restart nginx
 ```
 
-### 5.3. 資料庫同步 (可選)
+### 5.3. 資料庫同步
 
 若需要從舊主機同步 `linebot.templates` 資料表：
 
 ```bash
 # 透過 ssh 從舊主機 mysqldump，並匯入到新主機
 # (請替換 key 路徑、帳號、主機、密碼等資訊)
-ssh -i /path/to/your/private_key user@old-host "mysqldump -u root -p'password' linebot templates" | mysql -u linebot -p'linebot' -h 127.0.0.1 linebot
+# 在本地端執行以下命令：
+ssh -i /path/to/your/private_key user@34.80.198.239 "mysqldump -h 127.0.0.1 -u root -p'password' linebot templates" | ssh -i /path/to/your/private_key user@new-host "mysql -h 127.0.0.1 -u root -p'password' linebot"
 ```
+
 > **注意**: 在命令列中直接使用密碼存在安全風險，建議使用其他更安全的方式。
 
 部署完成！
