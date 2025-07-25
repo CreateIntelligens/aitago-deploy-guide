@@ -34,21 +34,79 @@ if ! id "deploy" &>/dev/null; then
     exit 1
 fi
 
-# 函數：詢問用戶輸入
+# 函數：驗證輸入是否包含不安全字符
+validate_input() {
+    local value="$1"
+    local field_name="$2"
+    
+    # 檢查是否包含 | 字符（我們的 sed 分隔符）
+    if [[ "$value" == *"|"* ]]; then
+        echo "錯誤: $field_name 不能包含 '|' 字符"
+        return 1
+    fi
+    
+    # 檢查是否包含換行符
+    if [[ "$value" == *$'\n'* ]]; then
+        echo "錯誤: $field_name 不能包含換行符"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 函數：安全地更新或添加環境變數到 .env 檔案（保持原位置）
+update_or_add_env_var() {
+    local env_file="$1"
+    local var_name="$2"
+    local var_value="$3"
+    local description="${4:-$var_name}"
+    
+    # 檢查 .env 檔案是否存在
+    if [ ! -f "$env_file" ]; then
+        echo "錯誤: $env_file 檔案不存在"
+        return 1
+    fi
+    
+    # 轉義特殊字符以避免 sed 命令出錯
+    local escaped_value=$(printf '%s\n' "$var_value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    
+    # 檢查變數是否已存在
+    if grep -q "^${var_name}=" "$env_file"; then
+        echo "更新現有的 $description..."
+        # 使用 sed 在原位置更新變數
+        sed -i "s|^${var_name}=.*|${var_name}=${escaped_value}|" "$env_file"
+        echo "已更新 $description"
+    else
+        echo "添加新的 $description..."
+        printf "%s=%s
+" "$var_name" "$var_value" >> "$env_file"
+        echo "已添加 $description"
+    fi
+}
+
+# 函數：詢問用戶輸入（帶驗證）
 ask_input() {
     local prompt="$1"
     local var_name="$2"
     local default_value="$3"
     local input
     
-    if [ -n "$default_value" ]; then
-        read -p "$prompt [$default_value]: " input
-        input="${input:-$default_value}"
-    else
-        read -p "$prompt: " input
-    fi
-    
-    eval "$var_name='$input'"
+    while true; do
+        if [ -n "$default_value" ]; then
+            read -p "$prompt [$default_value]: " input
+            input="${input:-$default_value}"
+        else
+            read -p "$prompt: " input
+        fi
+        
+        # 驗證輸入
+        if validate_input "$input" "$prompt"; then
+            eval "$var_name='$input'"
+            break
+        else
+            echo "請重新輸入，避免使用 '|' 字符和換行符"
+        fi
+    done
 }
 
 # 函數：詢問是否繼續
@@ -121,7 +179,7 @@ ask_input "專案域名 (例: example.com)" PROJECT_DOMAIN
 ask_input "專案名稱 (例: aitago)" PROJECT_NAME_INPUT
 ask_choice "請選擇應用程式環境：" APP_ENV 1 "local (開發環境)" "production (生產環境)"
 ask_input "Redis 密碼" REDIS_PASSWORD_INPUT
-ask_input "Aitago 資料庫密碼" DB_AITAGO_PASSWORD "Ai3ta2go1%@"
+ask_input "Aitago 資料庫密碼" DB_AITAGO_PASSWORD "Ai3ta2go1"
 ask_input "Line CRM 資料庫密碼" DB_LINEBOT_PASSWORD "linebot"
 
 echo ""
@@ -153,10 +211,7 @@ services:
     container_name: aitago-api
     restart: unless-stopped
     ports:
-        - "9002:9000"
-    volumes:
-     - ./src:/var/www/html:rw
-    restart: always
+        - "9002:80"
     networks:
       - nginx-php
     
@@ -175,58 +230,47 @@ if [ -f ".env.example" ]; then
     # 自動產生 APP_KEY 和 JWT_SECRET
     echo "自動產生 APP_KEY 和 JWT_SECRET..."
     APP_KEY=$(openssl rand -base64 32)
-    JWT_SECRET=$(openssl rand -base64 64)
+    JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n')
     
     # 詢問 Mail 設定
     echo "請提供 Mail 設定資訊："
     ask_input "Mail 使用者名稱" MAIL_USERNAME "bobbyliou830228@gmail.com"
-    ask_input "Mail 密碼" MAIL_PASSWORD "mrza haad cxcr uari"
+    ask_input "Mail 密碼" MAIL_PASSWORD "password123"
     
     # 更新 .env 檔案中的設定
-    sed -i "s/APP_KEY=.*/APP_KEY=base64:$APP_KEY/" .env
-    sed -i "s/JWT_SECRET=.*/JWT_SECRET=$JWT_SECRET/" .env
+    update_or_add_env_var ".env" "APP_KEY" "base64:$APP_KEY" "APP_KEY"
+    
+    # 使用新的函數安全地處理 JWT_SECRET
+    update_or_add_env_var ".env" "JWT_SECRET" "$JWT_SECRET" "JWT_SECRET"
     
     # 添加或更新 APP_TIMEZONE 設定
-    if grep -q "^APP_TIMEZONE=" .env; then
-        sed -i "s/APP_TIMEZONE=.*/APP_TIMEZONE=Asia\/Taipei/" .env
-    else
-        echo "APP_TIMEZONE=Asia/Taipei" >> .env
+    update_or_add_env_var ".env" "APP_TIMEZONE" "Asia/Taipei" "APP_TIMEZONE"
+    
+    # 確保 .env 文件以換行符結尾，避免新設定接在最後一行後面
+    if [ -s .env ] && [ "$(tail -c1 .env | wc -l)" -eq 0 ]; then
+        echo "" >> .env
     fi
     
-    # 添加或更新 JWT 相關設定 (使用 grep 檢查是否存在，不存在則添加)
-    if grep -q "^JWT_TTL=" .env; then
-        sed -i "s/JWT_TTL=.*/JWT_TTL=99999999999/" .env
-    else
-        echo "JWT_TTL=99999999999" >> .env
-    fi
-    
-    if grep -q "^JWT_REFRESH_TTL=" .env; then
-        sed -i "s/JWT_REFRESH_TTL=.*/JWT_REFRESH_TTL=99999999999/" .env
-    else
-        echo "JWT_REFRESH_TTL=99999999999" >> .env
-    fi
-    
-    if grep -q "^JWT_ALGO=" .env; then
-        sed -i "s/JWT_ALGO=.*/JWT_ALGO=HS256/" .env
-    else
-        echo "JWT_ALGO=HS256" >> .env
-    fi
+    # 添加或更新 JWT 相關設定
+    update_or_add_env_var ".env" "JWT_TTL" "99999999999" "JWT_TTL"
+    update_or_add_env_var ".env" "JWT_REFRESH_TTL" "99999999999" "JWT_REFRESH_TTL"
+    update_or_add_env_var ".env" "JWT_ALGO" "HS256" "JWT_ALGO"
     
     # 添加或更新 APP_ENV 設定
-    if grep -q "^APP_ENV=" .env; then
-        sed -i "s/APP_ENV=.*/APP_ENV=$APP_ENV/" .env
-    else
-        echo "APP_ENV=$APP_ENV" >> .env
-    fi
+    update_or_add_env_var ".env" "APP_ENV" "$APP_ENV" "APP_ENV"
     
-    sed -i "s|APP_URL=.*|APP_URL=https://api.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
-    sed -i "s|LINE_CRM_URL=.*|LINE_CRM_URL=https://line.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
-    sed -i "s|CORS_ALLOWED_ORIGINS=.*|CORS_ALLOWED_ORIGINS=https://$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
-    sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_AITAGO_PASSWORD|" .env
-    sed -i "s|REDIS_PASSWORD=.*|REDIS_PASSWORD=$REDIS_PASSWORD_INPUT|" .env
-    sed -i "s|MAIL_USERNAME=.*|MAIL_USERNAME=$MAIL_USERNAME|" .env
-    sed -i "s|MAIL_PASSWORD=.*|MAIL_PASSWORD=$MAIL_PASSWORD|" .env
-    sed -i "s|FRONT_END_URL=.*|FRONT_END_URL=https://$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
+    # 更新其他環境變數
+    update_or_add_env_var ".env" "APP_URL" "https://api.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "APP_URL"
+    update_or_add_env_var ".env" "LINE_CRM_URL" "https://line.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "LINE_CRM_URL"
+    update_or_add_env_var ".env" "CORS_ALLOWED_ORIGINS" "https://$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "CORS_ALLOWED_ORIGINS"
+    update_or_add_env_var ".env" "DB_CONNECTION" "mysql" "DB_CONNECTION"
+    update_or_add_env_var ".env" "DB_HOST" "172.21.0.1" "DB_HOST"
+    update_or_add_env_var ".env" "DB_PASSWORD" "$DB_AITAGO_PASSWORD" "DB_PASSWORD"
+    update_or_add_env_var ".env" "REDIS_PASSWORD" "$REDIS_PASSWORD_INPUT" "REDIS_PASSWORD"
+    update_or_add_env_var ".env" "REDIS_HOST" "172.21.0.1" "REDIS_HOST"
+    update_or_add_env_var ".env" "MAIL_USERNAME" "$MAIL_USERNAME" "MAIL_USERNAME"
+    update_or_add_env_var ".env" "MAIL_PASSWORD" "$MAIL_PASSWORD" "MAIL_PASSWORD"
+    update_or_add_env_var ".env" "FRONT_END_URL" "https://$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "FRONT_END_URL"
     
     echo "aitago-api .env 檔案已自動設定完成"
     echo "生成的 JWT_SECRET: $JWT_SECRET (將用於 line-crm)"
@@ -262,7 +306,6 @@ services:
     restart: unless-stopped
     ports:
         - "9001:80"
-    restart: always
     networks:
       - nginx-php
 
@@ -273,7 +316,6 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    restart: always
     depends_on:
       - linebot
     networks:
@@ -296,41 +338,21 @@ if [ -f ".env.example" ]; then
     LINE_APP_KEY=$(openssl rand -base64 32)
     
     # 更新 .env 檔案中的設定
-    sed -i "s/APP_KEY=.*/APP_KEY=base64:$LINE_APP_KEY/" .env
-    sed -i "s/JWT_SECRET=.*/JWT_SECRET=$JWT_SECRET/" .env
+    update_or_add_env_var ".env" "APP_KEY" "base64:$LINE_APP_KEY" "APP_KEY"
+    
+    # 使用統一的函數安全地處理 JWT_SECRET
+    update_or_add_env_var ".env" "JWT_SECRET" "$JWT_SECRET" "JWT_SECRET"
     
     # 添加或更新 APP_TIMEZONE 設定
-    if grep -q "^APP_TIMEZONE=" .env; then
-        sed -i "s/APP_TIMEZONE=.*/APP_TIMEZONE=Asia\/Taipei/" .env
-    else
-        echo "APP_TIMEZONE=Asia/Taipei" >> .env
-    fi
+    update_or_add_env_var ".env" "APP_TIMEZONE" "Asia/Taipei" "APP_TIMEZONE"
     
-    # 添加或更新 JWT 相關設定 (使用 grep 檢查是否存在，不存在則添加)
-    if grep -q "^JWT_TTL=" .env; then
-        sed -i "s/JWT_TTL=.*/JWT_TTL=99999999999/" .env
-    else
-        echo "JWT_TTL=99999999999" >> .env
-    fi
-    
-    if grep -q "^JWT_REFRESH_TTL=" .env; then
-        sed -i "s/JWT_REFRESH_TTL=.*/JWT_REFRESH_TTL=99999999999/" .env
-    else
-        echo "JWT_REFRESH_TTL=99999999999" >> .env
-    fi
-    
-    if grep -q "^JWT_ALGO=" .env; then
-        sed -i "s/JWT_ALGO=.*/JWT_ALGO=HS256/" .env
-    else
-        echo "JWT_ALGO=HS256" >> .env
-    fi
+    # 添加或更新 JWT 相關設定
+    update_or_add_env_var ".env" "JWT_TTL" "99999999999" "JWT_TTL"
+    update_or_add_env_var ".env" "JWT_REFRESH_TTL" "99999999999" "JWT_REFRESH_TTL"
+    update_or_add_env_var ".env" "JWT_ALGO" "HS256" "JWT_ALGO"
     
     # 添加或更新 APP_ENV 設定
-    if grep -q "^APP_ENV=" .env; then
-        sed -i "s/APP_ENV=.*/APP_ENV=$APP_ENV/" .env
-    else
-        echo "APP_ENV=$APP_ENV" >> .env
-    fi
+    update_or_add_env_var ".env" "APP_ENV" "$APP_ENV" "APP_ENV"
     
     # 詢問 Line 相關設定
     echo "請提供 Line 相關設定資訊："
@@ -343,16 +365,19 @@ if [ -f ".env.example" ]; then
     ask_input "Google Cloud Storage Path Prefix" GOOGLE_CLOUD_STORAGE_PATH_PREFIX "$PROJECT_NAME_INPUT"
     
     # 更新 .env 檔案
-    sed -i "s|APP_URL=.*|APP_URL=https://line.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN|" .env
-    sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=$DB_LINEBOT_PASSWORD|" .env
-    sed -i "s|REDIS_PASSWORD=.*|REDIS_PASSWORD=$REDIS_PASSWORD_INPUT|" .env
-    sed -i "s|LINE_BOT_CHANNEL_BASIC_ID=.*|LINE_BOT_CHANNEL_BASIC_ID=$LINE_BOT_CHANNEL_BASIC_ID|" .env
-    sed -i "s|LINE_BOT_CHANNEL_ACCESS_TOKEN=.*|LINE_BOT_CHANNEL_ACCESS_TOKEN=$LINE_BOT_CHANNEL_ACCESS_TOKEN|" .env
-    sed -i "s|LINE_BOT_CHANNEL_ID=.*|LINE_BOT_CHANNEL_ID=$LINE_BOT_CHANNEL_ID|" .env
-    sed -i "s|LINE_BOT_CHANNEL_SECRET=.*|LINE_BOT_CHANNEL_SECRET=$LINE_BOT_CHANNEL_SECRET|" .env
-    sed -i "s|LINE_LOGIN_CHANNEL_ID=.*|LINE_LOGIN_CHANNEL_ID=$LINE_LOGIN_CHANNEL_ID|" .env
-    sed -i "s|LINE_LOGIN_CHANNEL_SECRET=.*|LINE_LOGIN_CHANNEL_SECRET=$LINE_LOGIN_CHANNEL_SECRET|" .env
-    sed -i "s|GOOGLE_CLOUD_STORAGE_PATH_PREFIX=.*|GOOGLE_CLOUD_STORAGE_PATH_PREFIX=\"$GOOGLE_CLOUD_STORAGE_PATH_PREFIX\"|" .env
+    update_or_add_env_var ".env" "APP_URL" "https://line.$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "APP_URL"
+    update_or_add_env_var ".env" "DB_CONNECTION" "mysql" "DB_CONNECTION"
+    update_or_add_env_var ".env" "DB_HOST" "172.21.0.1" "DB_HOST"
+    update_or_add_env_var ".env" "DB_PASSWORD" "$DB_LINEBOT_PASSWORD" "DB_PASSWORD"
+    update_or_add_env_var ".env" "REDIS_PASSWORD" "$REDIS_PASSWORD_INPUT" "REDIS_PASSWORD"
+    update_or_add_env_var ".env" "REDIS_HOST" "172.21.0.1" "REDIS_HOST"
+    update_or_add_env_var ".env" "LINE_BOT_CHANNEL_BASIC_ID" "$LINE_BOT_CHANNEL_BASIC_ID" "LINE_BOT_CHANNEL_BASIC_ID"
+    update_or_add_env_var ".env" "LINE_BOT_CHANNEL_ACCESS_TOKEN" "$LINE_BOT_CHANNEL_ACCESS_TOKEN" "LINE_BOT_CHANNEL_ACCESS_TOKEN"
+    update_or_add_env_var ".env" "LINE_BOT_CHANNEL_ID" "$LINE_BOT_CHANNEL_ID" "LINE_BOT_CHANNEL_ID"
+    update_or_add_env_var ".env" "LINE_BOT_CHANNEL_SECRET" "$LINE_BOT_CHANNEL_SECRET" "LINE_BOT_CHANNEL_SECRET"
+    update_or_add_env_var ".env" "LINE_LOGIN_CHANNEL_ID" "$LINE_LOGIN_CHANNEL_ID" "LINE_LOGIN_CHANNEL_ID"
+    update_or_add_env_var ".env" "LINE_LOGIN_CHANNEL_SECRET" "$LINE_LOGIN_CHANNEL_SECRET" "LINE_LOGIN_CHANNEL_SECRET"
+    update_or_add_env_var ".env" "GOOGLE_CLOUD_STORAGE_PATH_PREFIX" "\"$GOOGLE_CLOUD_STORAGE_PATH_PREFIX\"" "GOOGLE_CLOUD_STORAGE_PATH_PREFIX"
     
     echo "line-crm .env 檔案已自動設定完成"
     echo ""
@@ -428,7 +453,7 @@ case $PROJECT in
     api)
         PROJECT_DIR="/srv/aitago-api"
         ;;
-    crm)
+    crm|line)
         PROJECT_DIR="/srv/line-crm"
         ;;
     all)
