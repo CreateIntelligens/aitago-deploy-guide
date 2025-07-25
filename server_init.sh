@@ -121,10 +121,10 @@ fi
 MYSQL_CLIENT_PACKAGE=$(get_mysql_client_package)
 echo "使用 MySQL 客戶端套件: $MYSQL_CLIENT_PACKAGE"
 
-echo "安裝必要套件: git, redis-tools, certbot, python3-certbot-nginx, $MYSQL_CLIENT_PACKAGE..."
+echo "安裝必要套件: git, redis-tools, certbot, python3-certbot-nginx, rsync, $MYSQL_CLIENT_PACKAGE..."
 
 # 建立套件列表
-PACKAGES="git redis-tools certbot python3-certbot-nginx $MYSQL_CLIENT_PACKAGE"
+PACKAGES="git redis-tools certbot python3-certbot-nginx rsync $MYSQL_CLIENT_PACKAGE"
 
 # 嘗試安裝套件，如果 MySQL 客戶端失敗，嘗試替代方案
 if ! $PKG_INSTALL $PACKAGES; then
@@ -132,9 +132,9 @@ if ! $PKG_INSTALL $PACKAGES; then
     
     # 嘗試替代套件
     if [[ "$OS" == *"Debian"* ]]; then
-        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx mariadb-client"
+        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx rsync mariadb-client"
     else
-        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx default-mysql-client"
+        ALT_PACKAGES="git redis-tools certbot python3-certbot-nginx rsync default-mysql-client"
     fi
     
     echo "嘗試安裝: $ALT_PACKAGES"

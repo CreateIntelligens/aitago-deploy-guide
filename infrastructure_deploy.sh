@@ -130,24 +130,25 @@ echo "----------------------------------------"
 echo "建立 Redis 設定檔..."
 cat > /srv/docker-compose/redis-conf/redis.conf << REDISEOF
 # Redis 設定檔
+# Network
 port 6379
 bind 0.0.0.0
+timeout 0
+tcp-keepalive 300
+
+# Authentication
 requirepass $REDIS_PASSWORD
 
-# 基本設定
-timeout 0
-keepalive 300
+# General
 databases 16
+loglevel notice
 
-# 持久化設定
+# Persistence
 save 900 1
 save 300 10
 save 60 10000
 
-# 日誌設定
-loglevel notice
-
-# 最大記憶體設定
+# Memory management
 maxmemory-policy allkeys-lru
 REDISEOF
 
