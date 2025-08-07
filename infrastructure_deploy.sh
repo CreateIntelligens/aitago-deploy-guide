@@ -23,8 +23,20 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # 檢查 Docker Compose 是否已安裝
-if ! docker compose version &> /dev/null; then
+if ! docker compose version &> /dev/null && ! docker-compose --version &> /dev/null; then
     echo "錯誤: Docker Compose 未安裝，請先執行 server_init.sh"
+    exit 1
+fi
+
+# 偵測 Docker Compose 版本並設定命令
+if docker compose version &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+    echo "偵測到 Docker Compose Plugin 版本"
+elif docker-compose --version &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+    echo "偵測到 Docker Compose 獨立版本"
+else
+    echo "錯誤: 無法偵測 Docker Compose"
     exit 1
 fi
 
@@ -217,16 +229,16 @@ echo "切換到 docker-compose 目錄..."
 cd /srv/docker-compose
 
 echo "下載 Docker 映像檔..."
-docker compose pull
+$DOCKER_COMPOSE_CMD pull
 
 echo "啟動基礎服務 (MySQL 和 Redis)..."
-docker compose up -d
+$DOCKER_COMPOSE_CMD up -d
 
 echo "等待服務啟動..."
 sleep 10
 
 echo "檢查服務狀態..."
-docker compose ps
+$DOCKER_COMPOSE_CMD ps
 
 echo ""
 echo "8. 驗證服務..."
@@ -281,8 +293,8 @@ echo "設定檔位置："
 echo "- MySQL 環境變數: /srv/docker-compose/.env"
 echo "- Redis 設定檔: /srv/docker-compose/redis-conf/redis.conf"
 echo ""
-echo "服務狀態："
-docker compose ps
+echo "基礎設施服務狀態："
+$DOCKER_COMPOSE_CMD ps
 echo ""
 echo "後續步驟："
 echo "1. 執行專案部署腳本 (建議建立 project_deploy.sh)"
@@ -290,7 +302,7 @@ echo "2. 設定 Nginx 反向代理"
 echo "3. 申請 SSL 憑證"
 echo ""
 echo "管理命令："
-echo "- 查看服務狀態: cd /srv/docker-compose && sudo docker compose ps"
-echo "- 查看服務日誌: cd /srv/docker-compose && sudo docker compose logs"
-echo "- 重啟服務: cd /srv/docker-compose && sudo docker compose restart"
-echo "- 停止服務: cd /srv/docker-compose && sudo docker compose down"
+echo "- 查看服務狀態: cd /srv/docker-compose && sudo $DOCKER_COMPOSE_CMD ps"
+echo "- 查看服務日誌: cd /srv/docker-compose && sudo $DOCKER_COMPOSE_CMD logs"
+echo "- 重啟服務: cd /srv/docker-compose && sudo $DOCKER_COMPOSE_CMD restart"
+echo "- 停止服務: cd /srv/docker-compose && sudo $DOCKER_COMPOSE_CMD down"

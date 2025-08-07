@@ -67,8 +67,14 @@ update_or_add_env_var() {
         return 1
     fi
     
+    # 檢查值是否已經有雙引號包圍，如果沒有則添加
+    local quoted_value="$var_value"
+    if [[ ! "$var_value" =~ ^\".*\"$ ]]; then
+        quoted_value="\"$var_value\""
+    fi
+    
     # 轉義特殊字符以避免 sed 命令出錯
-    local escaped_value=$(printf '%s\n' "$var_value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    local escaped_value=$(printf '%s\n' "$quoted_value" | sed 's/[[\.*^$()+?{|]/\\&/g')
     
     # 檢查變數是否已存在
     if grep -q "^${var_name}=" "$env_file"; then
@@ -79,7 +85,7 @@ update_or_add_env_var() {
     else
         echo "添加新的 $description..."
         printf "%s=%s
-" "$var_name" "$var_value" >> "$env_file"
+" "$var_name" "$quoted_value" >> "$env_file"
         echo "已添加 $description"
     fi
 }
@@ -171,6 +177,7 @@ echo ""
 echo "請提供 Git 儲存庫資訊："
 ask_input "aitago-api Git 儲存庫 URL" AITAGO_API_REPO "git@gitlab.aicreate360.com:aitago/aitago-api.git"
 ask_input "line-crm Git 儲存庫 URL" LINE_CRM_REPO "git@gitlab.aicreate360.com:aitago/line-crm.git"
+ask_choice "請選擇要部署的分支：" GIT_BRANCH 2 "main (主分支)" "develop (開發分支)"
 ask_input "VITE_API_URL (用於 line-crm 建置，要填寫line-crm的 API URL)" VITE_API_URL "https://api.example.com"
 
 echo ""
@@ -197,8 +204,8 @@ cd /srv
 mkdir -p aitago-api
 chown deploy:deploy aitago-api
 
-echo "克隆 aitago-api 專案..."
-sudo -u deploy bash -c "cd /srv/aitago-api && git clone '$AITAGO_API_REPO' ./src"
+echo "克隆 aitago-api 專案 ($GIT_BRANCH 分支)..."
+sudo -u deploy bash -c "cd /srv/aitago-api && git clone -b '$GIT_BRANCH' '$AITAGO_API_REPO' ./src"
 
 echo "建立 aitago-api 的 docker-compose.yaml..."
 cat > /srv/aitago-api/docker-compose.yaml << 'EOF'
@@ -234,8 +241,11 @@ if [ -f ".env.example" ]; then
     
     # 詢問 Mail 設定
     echo "請提供 Mail 設定資訊："
-    ask_input "Mail 使用者名稱" MAIL_USERNAME "bobbyliou830228@gmail.com"
-    ask_input "Mail 密碼" MAIL_PASSWORD "password123"
+    ask_input "Mail 主機 (SMTP)" MAIL_HOST "smtp.gmail.com"
+    ask_input "Mail 埠號 (SMTP)" MAIL_PORT "587"
+    ask_input "Mail 使用者名稱" MAIL_USERNAME "mis@aicreate360.com"
+    ask_input "Mail 密碼" MAIL_PASSWORD "\"fwiq qspy bhfc oirc\""
+    ask_input "Mail 發送地址" MAIL_FROM_ADDRESS "service@aitago.tw"
     
     # 更新 .env 檔案中的設定
     update_or_add_env_var ".env" "APP_KEY" "base64:$APP_KEY" "APP_KEY"
@@ -268,8 +278,12 @@ if [ -f ".env.example" ]; then
     update_or_add_env_var ".env" "DB_PASSWORD" "$DB_AITAGO_PASSWORD" "DB_PASSWORD"
     update_or_add_env_var ".env" "REDIS_PASSWORD" "$REDIS_PASSWORD_INPUT" "REDIS_PASSWORD"
     update_or_add_env_var ".env" "REDIS_HOST" "172.21.0.1" "REDIS_HOST"
+    update_or_add_env_var ".env" "MAIL_MAILER" "smtp" "MAIL_MAILER"
+    update_or_add_env_var ".env" "MAIL_HOST" "$MAIL_HOST" "MAIL_HOST"
+    update_or_add_env_var ".env" "MAIL_PORT" "$MAIL_PORT" "MAIL_PORT"
     update_or_add_env_var ".env" "MAIL_USERNAME" "$MAIL_USERNAME" "MAIL_USERNAME"
     update_or_add_env_var ".env" "MAIL_PASSWORD" "$MAIL_PASSWORD" "MAIL_PASSWORD"
+    update_or_add_env_var ".env" "MAIL_FROM_ADDRESS" "$MAIL_FROM_ADDRESS" "MAIL_FROM_ADDRESS"
     update_or_add_env_var ".env" "FRONT_END_URL" "https://$PROJECT_NAME_INPUT.$PROJECT_DOMAIN" "FRONT_END_URL"
     
     echo "aitago-api .env 檔案已自動設定完成"
@@ -289,8 +303,8 @@ cd /srv
 mkdir -p line-crm
 chown deploy:deploy line-crm
 
-echo "克隆 line-crm 專案..."
-sudo -u deploy bash -c "cd /srv/line-crm && git clone '$LINE_CRM_REPO' ./src"
+echo "克隆 line-crm 專案 ($GIT_BRANCH 分支)..."
+sudo -u deploy bash -c "cd /srv/line-crm && git clone -b '$GIT_BRANCH' '$LINE_CRM_REPO' ./src"
 
 echo "建立 line-crm 的 docker-compose.yaml..."
 cat > /srv/line-crm/docker-compose.yaml << EOF
@@ -416,19 +430,34 @@ cat > /srv/manage_projects.sh << 'EOF'
 
 set -e
 
+# 偵測 Docker Compose 版本並設定命令
+detect_docker_compose() {
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+        echo "偵測到 Docker Compose Plugin 版本"
+    elif docker-compose --version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        echo "偵測到 Docker Compose 獨立版本"
+    else
+        echo "錯誤: 無法偵測 Docker Compose"
+        exit 1
+    fi
+}
+
 show_help() {
     echo "Aitago 專案管理腳本"
     echo ""
-    echo "用法: $0 [COMMAND] [PROJECT]"
+    echo "用法: $0 [COMMAND] [PROJECT] [BRANCH]"
     echo ""
     echo "Commands:"
-    echo "  start     啟動專案"
-    echo "  stop      停止專案"
-    echo "  restart   重啟專案"
-    echo "  status    查看專案狀態"
-    echo "  logs      查看專案日誌"
-    echo "  build     重新建置專案"
-    echo "  update    更新專案代碼並重新建置"
+    echo "  start         啟動專案"
+    echo "  stop          停止專案"
+    echo "  restart       重啟專案"
+    echo "  status        查看專案狀態"
+    echo "  logs          查看專案日誌"
+    echo "  build         重新建置專案"
+    echo "  update        更新專案代碼並重新建置"
+    echo "  switch-branch 切換到指定分支並重新建置"
     echo ""
     echo "Projects:"
     echo "  api       aitago-api"
@@ -441,11 +470,22 @@ show_help() {
     echo "  $0 logs line"
 }
 
+# 偵測 Docker Compose 版本
+detect_docker_compose
+
 COMMAND=$1
 PROJECT=$2
+BRANCH=$3
 
 if [ -z "$COMMAND" ] || [ -z "$PROJECT" ]; then
     show_help
+    exit 1
+fi
+
+# 對於 switch-branch 命令，分支參數是必需的
+if [ "$COMMAND" = "switch-branch" ] && [ -z "$BRANCH" ]; then
+    echo "錯誤: switch-branch 命令需要指定分支名稱"
+    echo "用法: $0 switch-branch [PROJECT] [BRANCH]"
     exit 1
 fi
 
@@ -478,37 +518,37 @@ execute_command() {
 case $COMMAND in
     start)
         if [ "$PROJECT" = "all" ]; then
-            execute_command "/srv/aitago-api" "docker compose up -d"
-            execute_command "/srv/line-crm" "docker compose up -d"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD up -d"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD up -d"
         else
-            execute_command "$PROJECT_DIR" "docker compose up -d"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD up -d"
         fi
         ;;
     stop)
         if [ "$PROJECT" = "all" ]; then
-            execute_command "/srv/aitago-api" "docker compose down"
-            execute_command "/srv/line-crm" "docker compose down"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD down"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD down"
         else
-            execute_command "$PROJECT_DIR" "docker compose down"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD down"
         fi
         ;;
     restart)
         if [ "$PROJECT" = "all" ]; then
-            execute_command "/srv/aitago-api" "docker compose restart"
-            execute_command "/srv/line-crm" "docker compose restart"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD restart"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD restart"
         else
-            execute_command "$PROJECT_DIR" "docker compose restart"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD restart"
         fi
         ;;
     status)
         if [ "$PROJECT" = "all" ]; then
             echo "=== aitago-api 狀態 ==="
-            execute_command "/srv/aitago-api" "docker compose ps"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD ps"
             echo ""
             echo "=== line-crm 狀態 ==="
-            execute_command "/srv/line-crm" "docker compose ps"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD ps"
         else
-            execute_command "$PROJECT_DIR" "docker compose ps"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD ps"
         fi
         ;;
     logs)
@@ -516,15 +556,15 @@ case $COMMAND in
             echo "請指定特定專案查看日誌"
             exit 1
         else
-            execute_command "$PROJECT_DIR" "docker compose logs -f"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD logs -f"
         fi
         ;;
     build)
         if [ "$PROJECT" = "all" ]; then
-            execute_command "/srv/aitago-api" "docker compose up -d --build"
-            execute_command "/srv/line-crm" "docker compose up -d --build"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD up -d --build"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD up -d --build"
         else
-            execute_command "$PROJECT_DIR" "docker compose up -d --build"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD up -d --build"
         fi
         echo "清理未使用的 Docker 映像..."
         docker image prune -f
@@ -532,19 +572,53 @@ case $COMMAND in
     update)
         if [ "$PROJECT" = "all" ]; then
             echo "=== 更新 aitago-api ==="
-            execute_command "/srv/aitago-api/src" "sudo -u deploy git pull"
-            execute_command "/srv/aitago-api" "docker compose up -d --build"
+            execute_command "/srv/aitago-api/src" "sudo -u deploy git fetch origin"
+            execute_command "/srv/aitago-api/src" "sudo -u deploy git pull origin \$(git branch --show-current)"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD up -d --build"
             echo ""
             echo "=== 更新 line-crm ==="
-            execute_command "/srv/line-crm/src" "sudo -u deploy git pull"
-            execute_command "/srv/line-crm" "docker compose up -d --build"
+            execute_command "/srv/line-crm/src" "sudo -u deploy git fetch origin"
+            execute_command "/srv/line-crm/src" "sudo -u deploy git pull origin \$(git branch --show-current)"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD up -d --build"
         else
             if [ "$PROJECT" = "api" ]; then
-                execute_command "/srv/aitago-api/src" "sudo -u deploy git pull"
+                execute_command "/srv/aitago-api/src" "sudo -u deploy git fetch origin"
+                execute_command "/srv/aitago-api/src" "sudo -u deploy git pull origin \$(git branch --show-current)"
             elif [ "$PROJECT" = "crm" ]; then
-                execute_command "/srv/line-crm/src" "sudo -u deploy git pull"
+                execute_command "/srv/line-crm/src" "sudo -u deploy git fetch origin"
+                execute_command "/srv/line-crm/src" "sudo -u deploy git pull origin \$(git branch --show-current)"
             fi
-            execute_command "$PROJECT_DIR" "docker compose up -d --build"
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD up -d --build"
+        fi
+        echo "清理未使用的 Docker 映像..."
+        docker image prune -f
+        ;;
+    switch-branch)
+        if [ "$PROJECT" = "all" ]; then
+            echo "=== 切換 aitago-api 到 $BRANCH 分支 ==="
+            execute_command "/srv/aitago-api/src" "sudo -u deploy git fetch origin"
+            execute_command "/srv/aitago-api/src" "sudo -u deploy git checkout $BRANCH"
+            execute_command "/srv/aitago-api/src" "sudo -u deploy git pull origin $BRANCH"
+            execute_command "/srv/aitago-api" "$DOCKER_COMPOSE_CMD up -d --build"
+            echo ""
+            echo "=== 切換 line-crm 到 $BRANCH 分支 ==="
+            execute_command "/srv/line-crm/src" "sudo -u deploy git fetch origin"
+            execute_command "/srv/line-crm/src" "sudo -u deploy git checkout $BRANCH"
+            execute_command "/srv/line-crm/src" "sudo -u deploy git pull origin $BRANCH"
+            execute_command "/srv/line-crm" "$DOCKER_COMPOSE_CMD up -d --build"
+        else
+            if [ "$PROJECT" = "api" ]; then
+                echo "=== 切換 aitago-api 到 $BRANCH 分支 ==="
+                execute_command "/srv/aitago-api/src" "sudo -u deploy git fetch origin"
+                execute_command "/srv/aitago-api/src" "sudo -u deploy git checkout $BRANCH"
+                execute_command "/srv/aitago-api/src" "sudo -u deploy git pull origin $BRANCH"
+            elif [ "$PROJECT" = "crm" ]; then
+                echo "=== 切換 line-crm 到 $BRANCH 分支 ==="
+                execute_command "/srv/line-crm/src" "sudo -u deploy git fetch origin"
+                execute_command "/srv/line-crm/src" "sudo -u deploy git checkout $BRANCH"
+                execute_command "/srv/line-crm/src" "sudo -u deploy git pull origin $BRANCH"
+            fi
+            execute_command "$PROJECT_DIR" "$DOCKER_COMPOSE_CMD up -d --build"
         fi
         echo "清理未使用的 Docker 映像..."
         docker image prune -f
