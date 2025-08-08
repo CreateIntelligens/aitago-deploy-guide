@@ -413,7 +413,12 @@ cd /srv
 mkdir -p aitago-web
 chown -R deploy:deploy aitago-web
 find aitago-web -type d -exec chmod 2775 {} \;
-chmod -R 774 aitago-web
+# 給 nginx 使用者讀取權限
+NGINX_USER=$(ps aux | grep '[n]ginx' | awk '{print $1}' | head -n 1)
+if [ -z "$NGINX_USER" ]; then
+    NGINX_USER="www-data"
+fi
+setfacl -Rd -m u:$NGINX_USER:rx /srv/aitago-web
 
 echo "aitago-web 資料夾建立完成"
 echo "注意: 需要手動上傳打包好的前端靜態檔案到 /srv/aitago-web 目錄"
