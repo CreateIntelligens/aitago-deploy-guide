@@ -141,13 +141,17 @@ echo "5. 設定 MySQL 配置檔 (關閉 binlog)..."
 echo "----------------------------------------"
 # MySQL 配置目錄已在步驟1建立
 
-# 檢查 disable-binlog.cnf 是否存在於當前目錄
+# 檢查 disable-binlog.cnf 是否存在
 if [ -f "disable-binlog.cnf" ]; then
     echo "複製 disable-binlog.cnf 到 /srv/docker-compose/mysql-conf/..."
     cp disable-binlog.cnf /srv/docker-compose/mysql-conf/
     echo "MySQL binlog 已設定為關閉"
+elif [ -f "mysql/conf/disable-binlog.cnf" ]; then
+    echo "複製 mysql/conf/disable-binlog.cnf 到 /srv/docker-compose/mysql-conf/..."
+    cp mysql/conf/disable-binlog.cnf /srv/docker-compose/mysql-conf/
+    echo "MySQL binlog 已設定為關閉"
 else
-    echo "在當前目錄找不到 disable-binlog.cnf，建立新的配置檔..."
+    echo "找不到 disable-binlog.cnf，建立新的配置檔..."
     cat > /srv/docker-compose/mysql-conf/disable-binlog.cnf << MYSQLEOF
 # MySQL/MariaDB Configuration - Disable Binary Logging
 # Place this file in /etc/mysql/conf.d/ directory
