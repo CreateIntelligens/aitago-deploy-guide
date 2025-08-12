@@ -75,6 +75,7 @@ echo "----------------------------------------"
 echo "建立 /srv/docker-compose 相關資料夾..."
 mkdir -p /srv/docker-compose/mysql
 mkdir -p /srv/docker-compose/mysql-init
+mkdir -p /srv/docker-compose/mysql-conf
 mkdir -p /srv/docker-compose/redis
 mkdir -p /srv/docker-compose/redis-conf
 
@@ -136,7 +137,70 @@ SQLEOF
 echo "MySQL 初始化腳本建立完成"
 
 echo ""
-echo "5. 建立 Redis 設定檔..."
+echo "5. 設定 MySQL 配置檔 (關閉 binlog)..."
+echo "----------------------------------------"
+# MySQL 配置目錄已在步驟1建立
+
+# 檢查 disable-binlog.cnf 是否存在
+if [ -f "disable-binlog.cnf" ]; then
+    echo "複製 disable-binlog.cnf 到 /srv/docker-compose/mysql-conf/..."
+    cp disable-binlog.cnf /srv/docker-compose/mysql-conf/
+    echo "MySQL binlog 已設定為關閉"
+elif [ -f "mysql/conf/disable-binlog.cnf" ]; then
+    echo "複製 mysql/conf/disable-binlog.cnf 到 /srv/docker-compose/mysql-conf/..."
+    cp mysql/conf/disable-binlog.cnf /srv/docker-compose/mysql-conf/
+    echo "MySQL binlog 已設定為關閉"
+else
+    echo "找不到 disable-binlog.cnf，建立新的配置檔..."
+    cat > /srv/docker-compose/mysql-conf/disable-binlog.cnf << MYSQLEOF
+# MySQL/MariaDB Configuration - Disable Binary Logging
+# Place this file in /etc/mysql/conf.d/ directory
+# Filename: disable-binlog.cnf
+
+[mysqld]
+# Disable Binary Logging
+# This will override any log-bin settings in the main my.cnf
+skip-log-bin
+
+# Optional: Explicitly set log-bin to OFF (alternative method)
+# log-bin = OFF
+
+# Related binary log settings that can be disabled for performance
+sync_binlog = 0
+binlog_cache_size = 0
+
+# Performance optimizations when binary logging is disabled
+# Since we're not using replication, we can use more aggressive settings
+innodb_flush_log_at_trx_commit = 0
+
+# Additional performance settings for standalone servers
+# (without replication requirements)
+innodb_doublewrite = 0
+
+# Disable relay log (used in replication)
+skip-slave-start
+
+# Disable GTID if not needed (MySQL 5.6+)
+# Note: These settings are for MySQL, MariaDB uses different GTID syntax
+gtid_mode = OFF
+enforce_gtid_consistency = OFF
+
+# Comments for reference:
+# - skip-log-bin: Completely disables binary logging
+# - This saves disk space and improves write performance
+# - Removes ability to do point-in-time recovery
+# - Removes ability to set up master-slave replication
+# - Good for development, testing, or standalone production servers
+MYSQLEOF
+    echo "MySQL binlog 配置檔已建立並設定為關閉"
+fi
+
+# 設定配置檔權限
+chmod 644 /srv/docker-compose/mysql-conf/disable-binlog.cnf
+echo "MySQL 配置檔權限設定完成"
+
+echo ""
+echo "6. 建立 Redis 設定檔..."
 echo "----------------------------------------"
 # 建立 Redis 設定檔，避免在 Docker Compose 中使用環境變數
 echo "建立 Redis 設定檔..."
@@ -167,7 +231,7 @@ REDISEOF
 echo "Redis 設定檔建立完成"
 
 echo ""
-echo "6. 建立 Docker Compose 設定檔..."
+echo "7. 建立 Docker Compose 設定檔..."
 echo "----------------------------------------"
 # 2.5 建立 docker-compose.yaml
 echo "建立 docker-compose.yaml..."
@@ -190,6 +254,7 @@ services:
     volumes:
       - ./mysql:/var/lib/mysql:rw
       - ./mysql-init:/docker-entrypoint-initdb.d:rw
+      - ./mysql-conf:/etc/mysql/conf.d:ro
     networks:
       - nginx-php
     healthcheck:
@@ -222,7 +287,7 @@ YAMLEOF
 echo "Docker Compose 設定檔建立完成"
 
 echo ""
-echo "7. 啟動基礎服務..."
+echo "8. 啟動基礎服務..."
 echo "----------------------------------------"
 # 2.6 啟動基礎服務
 echo "切換到 docker-compose 目錄..."
@@ -241,7 +306,7 @@ echo "檢查服務狀態..."
 $DOCKER_COMPOSE_CMD ps
 
 echo ""
-echo "8. 驗證服務..."
+echo "9. 驗證服務..."
 echo "----------------------------------------"
 echo "等待 MySQL 服務完全啟動..."
 timeout=60
@@ -267,10 +332,11 @@ else
 fi
 
 echo ""
-echo "9. 設定目錄權限..."
+echo "10. 設定目錄權限..."
 echo "----------------------------------------"
 # 設定適當的權限
 chown -R 999:999 /srv/docker-compose/mysql
+chown -R 999:999 /srv/docker-compose/mysql-conf
 chown -R 999:999 /srv/docker-compose/redis
 chown -R 999:999 /srv/docker-compose/redis-conf
 
@@ -291,6 +357,7 @@ echo "- linebot (使用者: linebot)"
 echo ""
 echo "設定檔位置："
 echo "- MySQL 環境變數: /srv/docker-compose/.env"
+echo "- MySQL 配置檔: /srv/docker-compose/mysql-conf/"
 echo "- Redis 設定檔: /srv/docker-compose/redis-conf/redis.conf"
 echo ""
 echo "基礎設施服務狀態："
