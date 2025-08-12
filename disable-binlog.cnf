@@ -1,0 +1,38 @@
+# MySQL/MariaDB Configuration - Disable Binary Logging
+# Place this file in /etc/mysql/conf.d/ directory
+# Filename: disable-binlog.cnf
+
+[mysqld]
+# Disable Binary Logging
+# This will override any log-bin settings in the main my.cnf
+skip-log-bin
+
+# Optional: Explicitly set log-bin to OFF (alternative method)
+# log-bin = OFF
+
+# Related binary log settings that can be disabled for performance
+sync_binlog = 0
+binlog_cache_size = 0
+
+# Performance optimizations when binary logging is disabled
+# Since we're not using replication, we can use more aggressive settings
+innodb_flush_log_at_trx_commit = 0
+
+# Additional performance settings for standalone servers
+# (without replication requirements)
+innodb_doublewrite = 0
+
+# Disable relay log (used in replication)
+skip-slave-start
+
+# Disable GTID if not needed (MySQL 5.6+)
+# Note: These settings are for MySQL, MariaDB uses different GTID syntax
+gtid_mode = OFF
+enforce_gtid_consistency = OFF
+
+# Comments for reference:
+# - skip-log-bin: Completely disables binary logging
+# - This saves disk space and improves write performance
+# - Removes ability to do point-in-time recovery
+# - Removes ability to set up master-slave replication
+# - Good for development, testing, or standalone production servers
