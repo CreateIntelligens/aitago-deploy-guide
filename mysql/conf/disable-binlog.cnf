@@ -1,4 +1,4 @@
-# MySQL/MariaDB Configuration - Disable Binary Logging
+# MySQL 8.0 Configuration - Disable Binary Logging
 # Place this file in /etc/mysql/conf.d/ directory
 # Filename: disable-binlog.cnf
 
@@ -12,7 +12,8 @@ skip-log-bin
 
 # Related binary log settings that can be disabled for performance
 sync_binlog = 0
-binlog_cache_size = 0
+# Note: binlog_cache_size minimum value is 4096 in MySQL 8.0, setting to minimum
+binlog_cache_size = 4096
 
 # Performance optimizations when binary logging is disabled
 # Since we're not using replication, we can use more aggressive settings
@@ -20,15 +21,38 @@ innodb_flush_log_at_trx_commit = 0
 
 # Additional performance settings for standalone servers
 # (without replication requirements)
-innodb_doublewrite = 0
+# Note: innodb_doublewrite is deprecated in MySQL 8.0.20+, use innodb_doublewrite_pages instead
+innodb_doublewrite_pages = 0
 
 # Disable relay log (used in replication)
-skip-slave-start
+# Note: skip-slave-start is deprecated in MySQL 8.0.26+, use skip-replica-start instead
+skip-replica-start
 
 # Disable GTID if not needed (MySQL 5.6+)
-# Note: These settings are for MySQL, MariaDB uses different GTID syntax
+# These settings are compatible with MySQL 8.0
 gtid_mode = OFF
 enforce_gtid_consistency = OFF
+
+# MySQL 8.0 specific optimizations
+# Note: innodb_redo_log_archive_dirs is typically not needed for standalone servers
+# and is disabled by default in MySQL 8.0
+
+# Note: master_info_repository and relay_log_info_repository are deprecated in MySQL 8.0.23+
+# These settings are now handled automatically by MySQL 8.0
+
+# Note: host_cache_size is typically not needed for standalone servers
+host_cache_size = 0
+
+# Secure PID file location (eliminates insecure configuration warning)
+pid_file = /var/lib/mysql/mysqld.pid
+
+# SSL/TLS Configuration to eliminate CA certificate warnings
+# Use proper SSL configuration instead of self-signed certificates
+ssl_ca = 
+ssl_cert = 
+ssl_key = 
+# Disable SSL if not needed (removes CA certificate warnings)
+tls_version = ''
 
 # Comments for reference:
 # - skip-log-bin: Completely disables binary logging
