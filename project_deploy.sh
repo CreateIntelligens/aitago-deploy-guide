@@ -215,10 +215,22 @@ services:
         context: ./src
         dockerfile: Dockerfile
     image: aitago-api:latest
+    cpus: "1.0"
     container_name: aitago-api
     restart: unless-stopped
     ports:
         - "9002:80"
+    networks:
+      - nginx-php
+
+  aitago-api-scheduler:
+    image: aitago-api:latest
+    cpus: "0.3"
+    container_name: aitago-api-scheduler
+    command: php artisan schedule:work
+    restart: always
+    depends_on:
+      - aitago-api
     networks:
       - nginx-php
     
@@ -316,10 +328,35 @@ services:
         args:
           - VITE_API_URL=$VITE_API_URL
     image: linebot:latest
+    cpus: "1.0"
     container_name: linebot
     restart: unless-stopped
     ports:
         - "9001:80"
+    networks:
+      - nginx-php
+
+  linebot-horizon:
+    image: linebot:latest
+    cpus: "0.8"
+    container_name: linebot-horizon
+    command: php artisan horizon
+    ports:
+      - "9011:80"
+    restart: always
+    depends_on:
+      - linebot
+    networks:
+      - nginx-php
+
+  linebot-scheduler:
+    image: linebot:latest
+    cpus: "0.3"
+    container_name: linebot-scheduler
+    command: php artisan schedule:work
+    restart: always
+    depends_on:
+      - linebot
     networks:
       - nginx-php
 

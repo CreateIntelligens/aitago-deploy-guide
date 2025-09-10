@@ -67,9 +67,9 @@ sudo bash nginx_ssl_setup.sh
 ## 部署前準備
 
 1. **伺服器要求**
-   - Ubuntu 18.04+ 或 Debian 10+
+   - Ubuntu 18.04+ 或 Debian 10+ 或 Amazon Linux 2023
    - 至少 2GB RAM
-   - 至少 20GB 儲存空間
+   - 至少 50GB 儲存空間
    - Root 或 sudo 權限
 
 2. **網路要求**
